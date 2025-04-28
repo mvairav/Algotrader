@@ -1,0 +1,8 @@
+{
+    "data_source": {
+        "provider": "csv", 
+        "path_template": "./data/historical/{symbol}_1min.csv",
+        "datetime_col": "timestamp", 
+        "date_format": null 
+    }
+}

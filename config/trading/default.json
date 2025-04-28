@@ -1,0 +1,13 @@
+{
+    "trading": {
+        "order_quantity": 10,
+        "commission_per_share": 0.005,
+        "slippage_pct": 0.0005
+    },
+
+    "strategy_params": {
+         "stop_loss_pct": 0.03,
+         "take_profit_pct": 0.06,
+         "eod_exit_time": "15:45:00" 
+    }
+}
