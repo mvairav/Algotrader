@@ -1,6 +1,6 @@
 {
     "run_description": "Backtest MACD Crossover on AAPL 1min data (5min signals)",
-    "mode": "backtest",
+    "run_mode": "backtest",
     "log_level": "INFO", 
 
     "contract_config_file": "../contracts/aapl_stock.json",

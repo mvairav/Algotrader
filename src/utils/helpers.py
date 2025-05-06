@@ -68,7 +68,7 @@ def print_header_line(console,columns):
     console.print("-" * total_width)  
 
 
-def load_config(config_path):
+def load_json_config(config_path):
     """
     Load configuration from a JSON file, handling relative paths for sub-configs.
 
@@ -107,9 +107,84 @@ def load_config(config_path):
                 sub_config = json.load(sub_file)
                 merged_config.update(sub_config)
 
-    # Now add/overwrite any other main config values
-    for key, value in main_config.items():
-        if "_config_file" not in key:  # Skip keys that are config files
-            merged_config[key] = value
+    # Now add/overwrite all the values from main config   
+    merged_config.update(main_config)  
 
     return merged_config
+
+
+def get_value_from_dict(data_dict, key, default,logger=None,raise_error=False):
+    """
+    Get a value from a dictionary with a default fallback and optional logging.
+    Args:
+        data_dict (dict): The dictionary to search.
+        key (str): The key to look for.
+        default: The default value to return if the key is not found.
+        logger (logging.Logger, optional): Logger instance for warnings. Defaults to None.
+        raise_error (bool, optional): If True, raises KeyError if key is not found. Defaults to False.
+    Returns:
+        The value associated with the key if found, otherwise the default value.
+    """
+    value = default
+    if key in data_dict:
+        value = data_dict[key]
+    else:
+        if logger:
+            logger.warning(f"Key '{key}' not found in dictionary. Using default value: {default}")
+        if raise_error:
+            raise KeyError(key)
+    return value
+
+    
+def get_contract_data_filepath(contract,top_level_foldername, barsize,filetype='csv'):
+    """
+    Generate a filename for the contract
+    
+    Args:
+        contract (Contract): The Contract object.
+        barsize (str): bar size or time frame for the data.
+    
+    Returns:
+        str: The formatted file name for the contract data.
+    """
+    from ib_async import Contract  # Import here to avoid circular imports
+    if not isinstance(contract, Contract):
+        raise ValueError("Invalid contract object provided.")
+    
+    _expiry = contract.lastTradeDateOrContractMonth
+    _strike = int(contract.strike)
+    _barsize = barsize.replace(" ", "").lower()
+    folder= f'{top_level_foldername}/{_expiry}/{_strike}/'
+    filename = f"{contract.symbol}_{_expiry}_{_strike}_{contract.right}_{_barsize}.{filetype}"
+    filepath = folder + filename
+
+    return filepath
+
+def print_header_line(console,columns):
+    from rich.text import Text  # For colored text
+
+    # --- Create the header string using a loop ---
+    header_parts = []
+    total_width = 0
+
+    for column in columns:
+        if hasattr(column, "_table_column"):  # Check if the column has a table_column attribute.
+            header = Text(column._table_column.header, style=column._table_column.header_style, justify="left")  # Create a Text object with the header style
+            header_width = column._table_column.width 
+            if  column._table_column.header == "Task":
+                header_width += 2
+            if column._table_column.header == "Curr Value":
+                header_width -= 1
+            total_width += header_width #Accumulate header width values
+
+            #Calculate the amount of padding the headers should take
+            header.pad_right(header_width - len(column._table_column.header))  # Add padding
+            header_parts.append(header)
+        else: #There is no table column attribute, and skip append
+            print("skipping the non column elements like progress")
+    console.print("-" * total_width)  
+    console.print(*header_parts)  # Print the header with the specified style
+    console.print("-" * total_width)  
+
+
+

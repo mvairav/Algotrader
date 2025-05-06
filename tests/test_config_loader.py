@@ -8,7 +8,7 @@ import pathlib
 project_root = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.helpers import load_config
+from src.utils.helpers import load_json_config
 
 # --- Fixtures ---
 
@@ -66,7 +66,7 @@ def main_config_only_sub(temp_config_dir, sub_config_file):
 def test_load_simple_config(simple_config_file):
     """Tests loading a single, simple config file."""
     expected_config = {"key1": "value1", "key2": 123}
-    loaded_config = load_config(simple_config_file)
+    loaded_config = load_json_config(simple_config_file)
     assert loaded_config == expected_config
 
 def test_load_config_with_subconfig(main_config_file_with_sub):
@@ -76,7 +76,7 @@ def test_load_config_with_subconfig(main_config_file_with_sub):
         "main_key": "main_value", # From main_config
         "key2": 789 # Overridden by main_config
     }
-    loaded_config = load_config(main_config_file_with_sub)
+    loaded_config = load_json_config(main_config_file_with_sub)
     assert loaded_config == expected_config
 
 def test_load_config_with_only_subconfig(main_config_only_sub):
@@ -85,14 +85,14 @@ def test_load_config_with_only_subconfig(main_config_only_sub):
         "sub_key": "sub_value",
         "key2": 456
     }
-    loaded_config = load_config(main_config_only_sub)
+    loaded_config = load_json_config(main_config_only_sub)
     assert loaded_config == expected_config
 
 def test_load_nonexistent_main_config(temp_config_dir):
     """Tests loading a non-existent main config file."""
     non_existent_path = str(temp_config_dir / "non_existent.json")
     with pytest.raises(FileNotFoundError, match="Configuration file not found"):
-        load_config(non_existent_path)
+        load_json_config(non_existent_path)
 
 def test_load_nonexistent_sub_config(temp_config_dir):
     """Tests loading a main config referencing a non-existent sub-config."""
@@ -109,14 +109,14 @@ def test_load_nonexistent_sub_config(temp_config_dir):
     assert os.path.exists(main_config_path)
 
     with pytest.raises(FileNotFoundError, match="Sub-configuration file not found"):
-        load_config(str(main_config_path))
+        load_json_config(str(main_config_path))
 
 def test_load_empty_main_config(temp_config_dir):
     """Tests loading an empty main config file."""
     config_path = temp_config_dir / "empty.json"
     with open(config_path, 'w') as f:
         json.dump({}, f)
-    loaded_config = load_config(str(config_path))
+    loaded_config = load_json_config(str(config_path))
     assert loaded_config == {}
 
 def test_load_config_with_non_json_content(temp_config_dir):
@@ -125,7 +125,7 @@ def test_load_config_with_non_json_content(temp_config_dir):
     with open(config_path, 'w') as f:
         f.write("this is not json")
     with pytest.raises(json.JSONDecodeError):
-        load_config(str(config_path))
+        load_json_config(str(config_path))
 
 def test_load_actual_run_config():
     """Tests loading an actual run configuration file and its sub-configs."""
@@ -166,5 +166,5 @@ def test_load_actual_run_config():
 
     assert run_config_path.exists(), f"Config file not found at {run_config_path}"
 
-    loaded_config = load_config(str(run_config_path))
+    loaded_config = load_json_config(str(run_config_path))
     assert loaded_config == expected_config

@@ -1,10 +1,10 @@
 {
   "strategy_name": "MACDStrategy", 
-  "coarse_timeframe": "5min",    
   "strategy_params": {
       "macd_fast": 12,
       "macd_slow": 26,
-      "macd_signal": 9
+      "macd_signal": 9,
+      "barsize": "5mins"
   }
 }
 

@@ -1,6 +1,9 @@
 {
-    "symbol": "AAPL",
-    "secType": "STK",
-    "currency": "USD",
-    "exchange": "SMART"
+    "contract": {
+        "symbol": "AAPL",
+        "secType": "STK",
+        "currency": "USD",
+        "exchange": "SMART"
+    },
+    "contract_description": "Apple Inc. Common Stock"
 }

@@ -30,9 +30,14 @@ def setup_general_logging(
         logging.getLogger().addHandler(logging.NullHandler()) # Add NullHandler to avoid "no handler" warnings
         return
 
+    created_dir = False
     if log_to_file and log_dir:
-        os.makedirs(log_dir, exist_ok=True)
-
+        try:
+            os.makedirs(log_dir, exist_ok=False)
+            created_dir = True
+        except OSError as e:
+            created_dir = False
+    
     handlers = {}
     root_handlers = []
 
@@ -85,9 +90,12 @@ def setup_general_logging(
 
     try:
         logging.config.dictConfig(log_config)
-        logging.debug("General logging configured successfully.")
+        import json
+        logging.getLogger(__file__).info(f"General logging configured successfully.")
+        logging.getLogger(__file__).debug(f"Logging config: {json.dumps(log_config,indent=4)}")
     except Exception as e:
         logging.basicConfig(level=level)
-        logging.exception(f"Error configuring general logging: {e}. Falling back to basicConfig.")
-
+        logging.getLogger(__file__).exception(f"Error configuring general logging: {e}. Falling back to basicConfig.")
+    if created_dir:
+        logging.getLogger(__file__).warning(f"General logging initialized with new directory. Log directory: {log_dir}. Created: {created_dir}")
 
