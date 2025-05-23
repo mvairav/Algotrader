@@ -1,2 +1,6 @@
 # Ignore all CSV files recursively
 *.csv
+*.tar.gz
+*.zip
+# Ignore all JSON files
+*.json

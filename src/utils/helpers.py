@@ -1,6 +1,6 @@
 from dateutil.relativedelta import relativedelta
 import logging
-
+from ib_async import BarData, RealTimeBar
 
 
 def get_date_intervals(start_date,end_date,freq_in_days=1,min_days=0,
@@ -113,6 +113,23 @@ def load_json_config(config_path):
     return merged_config
 
 
+def BarData_to_RealTimeBar(bar_data):
+    """
+    Convert BarData to RealTimeBar.
+    
+    Args:
+        bar_data (BarData): The BarData object to convert.
+    
+    Returns:
+        RealTimeBar: The converted RealTimeBar object.
+    """
+    if not isinstance(bar_data, BarData):
+        raise ValueError("Invalid BarData object provided.")
+    
+    return RealTimeBar(time=bar_data.date, open_=bar_data.open, high=bar_data.high, low=bar_data.low,
+                        close=bar_data.close, volume=bar_data.volume)
+
+
 def get_value_from_dict(data_dict, key, default,logger=None,raise_error=False):
     """
     Get a value from a dictionary with a default fallback and optional logging.
@@ -187,4 +204,54 @@ def print_header_line(console,columns):
     console.print("-" * total_width)  
 
 
+def with_timezone(timestamp, timezone, assume_naive_in="UTC"):
+    """
+    Convert a datetime to a specific timezone.
+
+    - If naive, assume it's in 'assume_naive_in' timezone before converting.
+    - If aware, it will be converted to the target timezone.
+
+    Args:
+        timestamp (datetime.datetime or pd.Timestamp): The datetime to convert.
+        timezone (str or tzinfo): The target timezone.
+        assume_naive_in (str or tzinfo): The timezone to assume for naive input.
+
+    Returns:
+        datetime.datetime: Timezone-aware datetime in the target zone.
+    """
+    from datetime import datetime
+    import pandas as pd
+
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+    import pytz
+
+    if isinstance(timestamp, pd.Timestamp):
+        dt = timestamp.to_pydatetime()
+    else:
+        dt = timestamp
+
+    # Parse timezones
+    def get_tz(tz):
+        if isinstance(tz, str):
+            try:
+                return ZoneInfo(tz)
+            except Exception:
+                return pytz.timezone(tz)
+        return tz
+
+    target_tz = get_tz(timezone)
+    source_tz = get_tz(assume_naive_in)
+
+    if dt.tzinfo is None:
+        # Naive: treat as source_tz, then convert
+        if hasattr(source_tz, "localize"):  # pytz
+            dt = source_tz.localize(dt)
+        else:  # zoneinfo
+            dt = dt.replace(tzinfo=source_tz)
+
+    # Now convert to target
+    return dt.astimezone(target_tz)
 

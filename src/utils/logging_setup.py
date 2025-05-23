@@ -1,11 +1,6 @@
-'''
-All Gemini 2.5 Pro 
-'''
-
 import logging
 import logging.config
 import os
-
 
 def setup_general_logging(
     log_dir: str,
