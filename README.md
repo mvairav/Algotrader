@@ -1,7 +1,6 @@
 # Algotrader : Algorithmic Day trading
 
-The goal for this project is not to create a new library that works for everything and everybody. 
-Expect significant hands on coding if using this.
+The goal for this project is not to create a new library that works for everything and everybody. Expect significant hands on coding if using this. Currently only work for ibkr but can be easily adapted to other broker/api. 
 
 ## Tasks:
 
@@ -14,3 +13,4 @@ Expect significant hands on coding if using this.
 *   [ ] <span style="color: red;">Learn new strategies</span>
 *   [ ] <span style="color: red;">Better Documentation</span>
 
+*Some part of the code is AI assisted, especially the helpers and loggers. Mostly gemini and claude on vscode/github copilot. 
