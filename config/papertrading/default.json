@@ -1,0 +1,7 @@
+{
+    "papertrading_params": {
+        "strike_range": 200,
+        "expiry_weeks": 1,
+        "index": "NIFTY50"
+    }
+}

@@ -1,0 +1,7 @@
+#Only keep base and example strategies
+!base_strategy.py
+!registry.py
+!macd_crossover_strategy.py
+
+# Ignore all strategies
+*.py

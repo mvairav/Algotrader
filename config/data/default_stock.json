@@ -1,0 +1,8 @@
+{
+    "data_source": {
+        "filetype": "csv", 
+        "path_template": "./data/historical/{symbol}/{filename}",
+        "datetime_col": "timestamp", 
+        "date_format": null 
+    }
+}

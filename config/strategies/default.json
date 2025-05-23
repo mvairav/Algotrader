@@ -1,0 +1,16 @@
+{
+  "strategy_name": "MACDCrossOverStrategy", 
+  "strategy_params": {
+      "macd_fast": 12,
+      "macd_slow": 26,
+      "macd_signal": 9,
+      "barsize": "5 mins"
+  },
+
+  "exit_params": {
+    "stop_loss_percent": 10,
+    "take_profit_percent": 100,
+    "trailing_stop_percent": 10,
+    "end_of_day": true 
+  }
+}

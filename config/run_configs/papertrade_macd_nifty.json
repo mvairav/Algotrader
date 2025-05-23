@@ -1,0 +1,13 @@
+{
+    "run_description": "Paper Trading MACD Crossover on NIFTY 5secs data (5min signals)",
+    "run_mode": "papertrading",
+    "log_level": "DEBUG", 
+    
+    "contract_config_file": "../contracts/nifty_option.json",
+    "strategy_config_file": "../strategies/macd.json",
+    "trade_management_config_file": "../trading/default.json",
+    "papertrading_params_config_file": "../papertrading/default.json",
+    "account_config_file": "../accounts/ibkr_default.json"
+
+    
+}

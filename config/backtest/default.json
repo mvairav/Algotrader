@@ -1,0 +1,7 @@
+{
+    "backtest_params": {
+        "start_date": "2025-03-17",
+        "end_date": "2025-04-17",
+        "initial_capital": 100000.0
+    }
+}

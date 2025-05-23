@@ -1,0 +1,15 @@
+{
+    "contract": {
+        "conId": 123456789,
+        "symbol": "NIFTY",
+        "secType": "OPT",
+        "currency": "INR",
+        "exchange": "NSE",
+        "lastTradeDateOrContractMonth": "20250417",
+        "strike": 23000,
+        "right": "CE",
+        "localSymbol": "NIFTY230417CE23000",
+        "multiplier": 75
+    },
+    "contract_description": "NIFTY 20000 Call Option"
+}
