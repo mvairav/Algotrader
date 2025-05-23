@@ -4,7 +4,7 @@
     "log_level": "DEBUG", 
     
     "contract_config_file": "../contracts/nifty_option.json",
-    "strategy_config_file": "../strategies/macd.json",
+    "strategy_config_file": "../strategies/default.json",
     "trade_management_config_file": "../trading/default.json",
     "papertrading_params_config_file": "../papertrading/default.json",
     "account_config_file": "../accounts/ibkr_default.json"

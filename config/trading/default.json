@@ -1,17 +1,13 @@
 {
     "trading": {
-        "order_quantity": 10,
+        "order_quantity": 75,
         "commission_per_share": 0.005,
         "slippage_pct": 0.0005,
         "market_timezone": "Asia/Kolkata",
         "market_open_time": "09:15:00",
         "market_close_time": "15:30:00",
         "eod_exit_time": "15:15:00"
-    },
-
-    "exit_params": {
-         "stop_loss_pct": 0.03,
-         "take_profit_pct": 0.06,
-         "end_of_day": true 
     }
+
+
 }

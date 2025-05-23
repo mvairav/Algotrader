@@ -4,7 +4,7 @@
     "log_level": "DEBUG", 
     
     "contract_config_file": "../contracts/nifty_option.json",
-    "strategy_config_file": "../strategies/macd_crossover.json",
+    "strategy_config_file": "../strategies/macd.json",
     "trade_management_config_file": "../trading/default.json",
     "backtest_params_config_file": "../backtest/default.json",
     "data_source_config_file": "../data/default_option.json"
