@@ -1,8 +1,6 @@
 {
     "trading": {
         "order_quantity": 75,
-        "commission_per_share": 0.005,
-        "slippage_pct": 0.0005,
         "market_timezone": "Asia/Kolkata",
         "market_open_time": "09:15:00",
         "market_close_time": "15:30:00",

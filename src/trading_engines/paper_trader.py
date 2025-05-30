@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import pandas as pd
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 import os 
 import sys
 
@@ -158,7 +158,6 @@ class PaperTrader(BaseEngine):
                 time.sleep(0.5)
 
 
-
     async def _on_exit_order(self, trade):
         """Callback for exit orders."""
         contract = trade.contract
@@ -175,7 +174,6 @@ class PaperTrader(BaseEngine):
             #self._log_trade(fill)
             self._active_exit_orders.pop(trade.contract,None)
            
-        
 
     async def _start(self, contract:Contract):
 
@@ -186,7 +184,10 @@ class PaperTrader(BaseEngine):
         self._running[contract] = True
         self.logger.info(f"Paper Trading Engine started for contract {contract.localSymbol} at {trade_start_time}.")
         
+        
         test_buy = True
+        test_sell = True
+        test_exit_after = self.trading_account.get_current_market_datetime() + timedelta(minutes=5) # Test exit after 5 minutes
         while self._running[contract]:
             try:
 
@@ -214,6 +215,23 @@ class PaperTrader(BaseEngine):
                     self.logger.info(f"Skipping trading today for {contract.localSymbol}.")
                     self._running[contract] = False
                     break
+
+                #test buy logic
+                if test_buy and current_position is None:
+                    self.logger.info(f"Placing test buy order for {contract.localSymbol} at {current_price:.2f} with timestamp {timestamp}.")
+                    await self.buy(contract, "test buy", current_price, timestamp, current_price)
+                    test_buy = False
+                    continue
+                if test_sell and current_position and current_position.position > 0:
+                    self.logger.info(f"Placing test sell order for {contract.localSymbol} at {current_price:.2f} with timestamp {timestamp}.")
+                    await self.sell(contract, "test sell", current_price, timestamp, current_price)
+                    test_sell = False
+                    continue
+                if test_exit_after and timestamp >= test_exit_after:
+                    self.logger.info(f"Exiting test after {test_exit_after} for {contract.localSymbol}.")
+                    self._running[contract] = False
+                    test_exit_after = None
+                    continue
 
                 # Check if the bar is complete and if we have a valid bar and then check for signals
                 if new_bar_started and completed_coarse_bar is not None:
@@ -263,7 +281,6 @@ class PaperTrader(BaseEngine):
             await self.sell(contract, "code completed", 0, 0,0)
 
 
-
     async def buy(self, contract, reason, current_price, timestamp, fill_price):
 
         async with self.contract_lock[contract]:
@@ -282,20 +299,21 @@ class PaperTrader(BaseEngine):
             )
             
             if sell_order:
-                self.trading_account.process_fill(trades[0].fills[0],trigger_price=current_price,trigger_time=timestamp)
+                order_groupname = sell_order.ocaGroup
+                self.trading_account.process_fill(trades[0].fills[0],trigger_price=current_price,trigger_time=timestamp,order_groupname=order_groupname)
                 self._active_exit_orders[contract] = sell_order
                 #self._log_trade(trades[0].fills[0])
                 slippage = trades[0].fills[0].execution.price - current_price
                 latency = (trades[0].fills[0].execution.time - timestamp).total_seconds() 
                 self.logger.info(f"Buy order and exit orders placed for {contract.localSymbol} with order ID: {trades[0].order.orderId} with slippage: {slippage:.2f} and latency: {latency} secs")
             elif trades:
-                self.trading_account.process_fill(trades[0].fills[0], trigger_price=current_price,trigger_time=timestamp)
+                order_groupname = trades[0].order.ocaGroup
+                self.trading_account.process_fill(trades[0].fills[0], trigger_price=current_price,trigger_time=timestamp, order_groupname=order_groupname)
                 self.logger.info(f"Only Buy order placed for {contract.localSymbol} with order ID: {trades[0].order.orderId}")
             else:
                 del self._active_exit_orders[contract]
                 self.logger.warning(f"Failed to place buy order for {contract.localSymbol}.")
             
-        
 
     async def sell(self, contract, reason, current_price, timestamp, fill_price):
         async with self.contract_lock[contract]:
@@ -308,6 +326,7 @@ class PaperTrader(BaseEngine):
                 self.logger.warning(f"No position (in offline log) to sell for {contract.localSymbol}. But trying to sell anyway.")
             if contract in self._active_exit_orders and self._active_exit_orders[contract] is not None:
                 self.logger.info(f"Placing sell order for {contract.localSymbol} at {current_price:.2f} with reason: {reason}")
+                
                 trade = await self.ibkr.place_market_order(contract=contract, ordertype="SELL", order_ref=reason,
                                                     quantity=self._active_exit_orders[contract].totalQuantity,
                                                     group_name=self._active_exit_orders[contract].ocaGroup 
@@ -320,18 +339,17 @@ class PaperTrader(BaseEngine):
                     timestamp = datetime.now(tz=self.ibkr.market_timezone)
                 latency = (trade.fills[0].execution.time - timestamp).total_seconds() 
                 self.logger.info(f"Sell order placed for {contract.localSymbol} with order ID: {trade.order.orderId} with slippage: {slippage:.2f} and latency: {latency} secs")
+                order_groupname = self._active_exit_orders[contract].ocaGroup 
                 self._active_exit_orders.pop(contract,None)
-                self.trading_account.process_fill(trade.fills[0],trigger_price=current_price,trigger_time=timestamp)
+                self.trading_account.process_fill(trade.fills[0],trigger_price=current_price,trigger_time=timestamp,order_groupname=order_groupname)
             else:
                 self.logger.info(f"Sell order does not exist for {contract.localSymbol}. Skipping sell now.")
                 return
             #self._log_trade(trade[0].fills[0])
 
 
-        
-
     # --- Main Run Loop ---
-    async def run(self,trade_filename):
+    async def run(self,trade_filename=None):
 
         """Main execution loop for paper trading."""
         if not await self._connect_and_setup():
@@ -357,7 +375,7 @@ class PaperTrader(BaseEngine):
                 self._running[self.contracts[i].localSymbol] = False
                 self.logger.info(f"Stopping paper trading for {self.contracts[i].localSymbol}...")
 
-        self.logger.info("Paper Trading Engine run loop finished.")
+        
 
         # Seprate out each statement in try except block to enssure one error 
         # does not stop stats and trades from being saved
@@ -366,7 +384,9 @@ class PaperTrader(BaseEngine):
                 await self._stop(c)
         except Exception as e:
             self.logger.exception(f"Error during Paper Trading Engine stop: {e}")
-
+        
+        self.logger.info("Paper Trading Engine run loop finished.")
+        
         try:
             self._print_summary() # Print summary at the end
         except Exception as e:
@@ -374,8 +394,11 @@ class PaperTrader(BaseEngine):
 
         try:
             df = self.trading_account.get_all_trades_df()
-            df.to_csv(trade_filename, index=True)
             self.logger.info(f"\n === Trades === \n {df} \n === Trades === \n")
+            if trade_filename is not None:
+                self.logger.info(f"Saving trades to file: {trade_filename}")
+                df.to_csv(trade_filename, index=True)
+            
         except Exception as e:
             self.logger.exception(f"Error saving trades to file: {e}")
 

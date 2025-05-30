@@ -1,0 +1,9 @@
+{
+    "index": {
+        "conId": 123456789,
+        "symbol": "NIFTY",
+        "secType": "OPT",
+        "currency": "INR",
+        "exchange": "NSE"
+    }
+}

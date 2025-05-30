@@ -1,7 +1,12 @@
 {
     "backtest_params": {
-        "start_date": "2025-03-17",
-        "end_date": "2025-04-17",
-        "initial_capital": 100000.0
+        "strike_range": 500.0,
+        "expiry_dates": ["2025-05-29"],
+        "initial_capital": 100000.0,
+        "commission_per_share": 0.005,
+        "slippage_pct": 0.0005,
+        "load_previous_day_data": true,
+        "index_data_file": "./data/historical/NIFTY/nifty50_daily.csv",
+        "options_data_folder": "./data/historical/NIFTY/20250529"
     }
 }

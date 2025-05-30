@@ -74,15 +74,29 @@ async def run_paper_trading(args,trade_filename):
 
     ROOT_LOGGER.info(f"Connected to IBKR. Available funds: {available_funds}")
 
+    from ib_async import Index
+    nifty = Index(symbol=papertrading_params['index'], exchange=papertrading_params['exchange'])
+    if not await ibkr.is_market_open(nifty):
+        ROOT_LOGGER.critical(f"Market for {papertrading_params['index']} is not open. Exiting.")
+        sys.exit(1)
+    ROOT_LOGGER.info(f"Market for {papertrading_params['index']} is open.")
+
     # Find contract to trade
     #If thursday, get contracts for next week
-    today = datetime.now(tz=ibkr.market_timezone)
+    from datetime import timedelta
+    from datetime import datetime
+
+    today = datetime.now(tz=ibkr.market_timezone).date()
     expiry_week = papertrading_params['expiry_weeks']
-    expiry_week += 1 if today.weekday() == 3 else 0 # Thursday 
+    days_till_thursday = (3 - today.weekday()) % 7
+    next_thursday =(today + timedelta(days=days_till_thursday))
+
+    # expiry_week += 1 if today.weekday() == 3 else 0 # Thursday 
 
     contracts = await ibkr.get_option_chains_new(symbol=papertrading_params['index'], 
                                expiry_weeks=expiry_week, strike_price_range=papertrading_params['strike_range'])
     
+    ROOT_LOGGER.info(f"Found {len(contracts)} contracts for {papertrading_params['index']} with expiry week {expiry_week}.")
     #Filter contracts if expiring today
 
     max_strike = max([c.strike for c in contracts])
@@ -90,7 +104,7 @@ async def run_paper_trading(args,trade_filename):
     ce_contract = None
     pe_contract = None
     for c in contracts:
-        if c.lastTradeDateOrContractMonth != today.strftime("%Y%m%d"):
+        if c.lastTradeDateOrContractMonth == next_thursday.strftime('%Y%m%d'):
             if c.right == "C" and c.strike == max_strike:
                 ce_contract = c
             if c.right == "P" and c.strike == min_strike:
@@ -102,7 +116,7 @@ async def run_paper_trading(args,trade_filename):
     contracts = [ce_contract, pe_contract]
 
     # Use TradingAccount
-    trading_account = TradingAccount(trading_params=trading_params,initial_capital=available_funds, account_id=ibkr_account_id)
+    trading_account = TradingAccount(trading_params=trading_params,initial_capital=available_funds, account_id=ibkr_account_id,tradefilepath=trade_filename)
 
     strategy_name = config.get('strategy_name')
     if not strategy_name: 
@@ -119,13 +133,6 @@ async def run_paper_trading(args,trade_filename):
                  for c in contracts
                 ]
 
-    # Live Data Handler (which uses BarAggregator internally)
-    try:
-        # Pass ib_connector instead of ib object, handler manages connection lifecycle?
-        # Or connect here and pass ib object? Let's assume handler takes connector.
-        live_data_handler = LiveMarketDataCollector(None, ibkr)
-    except Exception as e: ROOT_LOGGER.exception(f"Failed to initialize LiveDataHandler: {e}"); sys.exit(1)
-
 
     # 5. Instantiate PaperTrader Engine
     ROOT_LOGGER.info("Initializing PaperTrader engine...")
@@ -136,7 +143,7 @@ async def run_paper_trading(args,trade_filename):
     # 6. Run the Engine
     ROOT_LOGGER.info("Starting paper trading run...")
     try:
-        await paper_trader.run(trade_filename) # Run the main async loop
+        await paper_trader.run(None) # Run the main async loop
         ROOT_LOGGER.info("Paper trading run finished normally.")
     except asyncio.CancelledError:
         ROOT_LOGGER.info("Paper trading run cancelled.")
@@ -175,7 +182,7 @@ if __name__ == "__main__":
         log_filename=log_filename  # General log file for backtesting
     )
     ROOT_LOGGER = logging.getLogger(os.path.basename(__file__).replace('.py', ''))  # Use the script name as logger name
-    ROOT_LOGGER.info(f"Started Backtesting Process with pid {os.getpid()} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    ROOT_LOGGER.info(f"Started Papertrading Process with pid {os.getpid()} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     ROOT_LOGGER.info(f"arguments: {args}")
 
     # Run the main async function

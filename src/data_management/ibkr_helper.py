@@ -79,8 +79,10 @@ class IBKRHelper:
         self._data_loggers = {}  
 
         self._current_subscriptions = {}
+        self.last_error = []
 
-  
+        self.contract_disconnections = {}
+
     def __del__(self):
         """
         Destructor to clean up the IBKRHelper instance.
@@ -168,7 +170,7 @@ class IBKRHelper:
                 self.logger.error("IBKR instance is not connected, cannot get request ID")
                 return None
 
-    async def get_trading_hours(self, contract,contract_tzone=None):
+    async def get_trading_hours(self, contract,contract_tzone=None,cdetails=None):
         """
         Get the trading hours for a given contract.
         
@@ -186,7 +188,8 @@ class IBKRHelper:
             if contract_tzone is None:
                 cdetails = await self._ib_instance.reqContractDetailsAsync(contract)
                 contract_tzone = ZoneInfo(cdetails[0].timeZoneId)
-            
+            if cdetails is None:
+                cdetails = await self._ib_instance.reqContractDetailsAsync(contract)
             start_time, end_time = [datetime.datetime.strptime(d, "%Y%m%d:%H%M").replace(tzinfo=contract_tzone) for d in cdetails[0].tradingHours.split(";")[0].split("-")]
             self.logger.debug(f"Trading hours for {contract.localSymbol}: {start_time} - {end_time}")
             return start_time, end_time
@@ -323,31 +326,54 @@ class IBKRHelper:
             self.logger.error(f"Error handling commission details: {e}")
             
 
-    async def handle_error_details(self, reqId, errorCode, errorString, contract=None):
+    async def handle_error_details(self, reqId, errorCode, errorString, contract=None,selfcall=False):
         """Handles errors from IB."""
         # Catch informational messages (like connection confirmations) and error messages (data disconnections)
         # See https://interactivebrokers.github.io/tws-api/message_codes.html
         info_codes = {2103, 2104, 2105, 2106, 2107, 2108, 2158}
         if errorCode in info_codes:
-            self.logger.info(f"IB Info [{errorCode}]: {errorString}. reqId: {reqId}. Live subscriptions may be delayed or closed.")
-            self.last_error.append((datetime.datetime.now(self.market_timezone),errorCode, errorString))
+            if not selfcall:
+                self.logger.info(f"IB Info [{errorCode}]: {errorString}. reqId: {reqId}. Live subscriptions may be delayed or closed.")
+                self.last_error.append((datetime.datetime.now(self.market_timezone),errorCode, errorString))
 
-            #2103, 2104 and 2108 are related to market data subscriptions. 
-            if errorCode in {2103, 2104, 2108}:
+                #2103, 2104 and 2108 are related to market data subscriptions. 
 
-                for contract,value in self._current_subscriptions.items():
-                    if value[0] == "live_bars":
-                        self.logger.warning(f"!IB Error: Live bar subscription could have been closed. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}, Contract: {contract}. So re-subscribing...")
-                        #This will also unsubscribe and update the subscription 
-                        await self.subscribe_live_bars(contract=contract, callback=value[2], bar_size=value[1].bar_size,
-                                                    whatToShow=value[1].whatToShow, only_last_row=value[1].only_last_row, use_rth=value[1].useRTH)
-                    elif value[0] == "live_marketdata":
-                        self.logger.warning(f"!IB Error: Live Market data Subscription could have been closed. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}, Contract: {contract}. So re-subscribing...")
-                        #This will also unsubscribe and update the subscription 
-                        await self.subscribe_market_data(contract=contract, callback=value[2])
-        
+                if errorCode in {2103, 2104, 2108}:
+                    if errorCode == 2103: 
+                        self.logger.warning(f"!IB Error: Live data subscription could have been closed. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}, Contract: {contract}.")
+                        self.logger.info(f"Waiting for 2 secs before re-subscribing to live bars for contract {contract}...")
+                        self.contract_disconnections[contract] = 2103
+                        await asyncio.sleep(2)
+                        if contract not in self.contract_disconnections:
+                            self.logger.info(f"Contract has been reconnected")
+                            return
+                        '''
+                            Wait for 2 secs and call back again to resubscribe. 
+                            If reconnected within 2 secs, conract will be removed from contract_disconnections.
+                            As GIL lock guarantees that only one thread can execute Python bytecode at a time.
+                            Weird logic but will probably work as most disconnections get resolved within 2 secs.
+                        '''
+                        await self.handle_error_details(reqId, errorCode, errorString, contract=contract, selfcall=True)
+                    elif errorCode == 2104:
+                        self.logger.warning(f"!IB Error: Live data subscription could have been re-instated. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}, Contract: {contract}.")
+                        if contract in self.contract_disconnections:
+                            del self.contract_disconnections[contract]
+                            return
+                    elif errorCode == 2108:
+                        return
+                if contract in self.contract_disconnections:
+                    for c,value in self._current_subscriptions.items():
+                        if c != contract: continue
+                        self.logger.info(f"Re-subscribing to live bars for contract {contract}...")
+                        if value[0] == "live_bars":
+                            #This will also unsubscribe and update the subscription 
+                            await self.subscribe_live_bars(contract=c, callback=value[2], bar_size=value[1].barSize,
+                                                        what_to_show=value[1].whatToShow, use_rth=value[1].useRTH, only_last_row=value[3])
+                        elif value[0] == "live_marketdata":
+                            #This will also unsubscribe and update the subscription 
+                            await self.subscribe_market_data(contract=c, callback=value[2])
+                        del self.contract_disconnections[contract]
 
-                        
         else:
             
             for ocaGroup in self._active_exit_orders:
@@ -359,7 +385,8 @@ class IBKRHelper:
                     break
                 else:
                     self.logger.error(f"IB Error! ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}, Contract: {contract}")
-                
+    
+    
     async def get_contract(self, data_params):
         """
         Get a contract object from IB based on provided parameters.
@@ -435,17 +462,27 @@ class IBKRHelper:
 
                 from datetime import timedelta
 
-                #Request historical data for past 5 days (just in case)
-                start_date = (datetime.datetime.now()-timedelta(days=5)).replace(hour=9,minute=15,second=0,microsecond=0,tzinfo=self.market_timezone)
-                end_date = (datetime.datetime.now()-timedelta(days=1)).replace(hour=16,minute=0,second=0,microsecond=0,tzinfo=self.market_timezone)  
-                bars = await self.get_historical_bars(index,start_date,end_date,bar_size="1 day",return_bars=True)
+                if not await self.is_market_open(index):
+                    #Request historical data for past 5 days (just in case)
+                    start_date = (datetime.datetime.now(tz=self.market_timezone)-timedelta(days=5)).replace(hour=9,minute=15,second=0,microsecond=0,tzinfo=self.market_timezone)
+                    end_date = (datetime.datetime.now(tz=self.market_timezone)+timedelta(days=1)).replace(hour=16,minute=0,second=0,microsecond=0,tzinfo=self.market_timezone)  
+                    bars = await self.get_historical_bars(index,start_date,end_date,bar_size="1 day",return_bars=True)
+                    if bars is None or len(bars) == 0:
+                        self.logger.error(f"No historical bars received for {index}")
+                        return None
+                    market_price = bars[-1].close
+                else:
+                    #Request todays data
+                    start_date = datetime.datetime.now(tz=self.market_timezone).replace(hour=9,minute=15,second=0,microsecond=0)
+                    end_date = datetime.datetime.now(tz=self.market_timezone).replace(hour=16,minute=0,second=0,microsecond=0)
+                    bars = await self.get_historical_bars(index,start_date,end_date,bar_size="5 secs",return_bars=True)
+                    if bars is None or len(bars) == 0:
+                        self.logger.error(f"No historical bars received for {index}")
+                        return None
+                    market_price = bars[0].close
 
-
-                if bars is None or len(bars) == 0:
-                    self.logger.error(f"No historical bars received for {index}")
-                    return None
-                market_price = bars[-1].close
-                self.logger.debug(f"Last close price for symbol={symbol} is {market_price}")
+                    self.logger.info(f"Today's close price for symbol={symbol} at {bars[0].date} is {market_price}")
+                
 
             option = Option(symbol, '', 0, '', exchange)
 
@@ -513,7 +550,8 @@ class IBKRHelper:
         valid_contracts = [contract_details[i].contract for i in valid_contracts_pos]
         
         if len(valid_contracts)>0: valid_contracts.sort(key=lambda x: x.conId)
-
+        
+        self.logger.info(f"Retrieved contracts: \n {valid_contracts}")
         return valid_contracts
 
     async def get_option_chains(self, symbol="NIFTY50", exchange="NSE",currency="INR", strike_price_range=None, expiry_months=None, expiry_weeks=None):
@@ -745,10 +783,13 @@ class IBKRHelper:
                     corrected_bars = [bar for bar in bars if bar.date >= start_date]
                 else:
                     for bar in bars:
+                        self.logger.debug(f"Bar date: {bar.date} type = {type(bar.date)}, Start date: {start_date.date()} type= {type(start_date.date())}")
                         if bar.date >= start_date.date():
                             # Convert date to datetime with market timezone market timezone
                             bar.date = datetime.datetime.combine(bar.date, datetime.datetime.min.time()).replace(tzinfo=self.market_timezone)
                             corrected_bars.append(bar)
+                        else:
+                            self.logger.debug(f"Skipping bar with date {bar.date} as it is before start date {start_date.date()}")
                 return corrected_bars
             
             df = util.df(bars)
@@ -763,6 +804,8 @@ class IBKRHelper:
 
             #Since ibkr returns data starting from the end date behind to duration filter out the data
             #Return only greater than start_date
+            self.logger.debug(f"dataset: \n{df}")
+            self.logger.debug(f"Filtering data for date >= {start_date}")
             df = df[df['date'] >= start_date]
 
             #df.set_index('date', inplace=True)
@@ -851,10 +894,11 @@ class IBKRHelper:
                     if self._current_subscriptions[c][0] == "live_bars" and c == contract:
                         self._current_subscriptions[c][1] = bars_subscription
                         self._current_subscriptions[c][2] = callback
+                        self._current_subscriptions[c][3] = only_last_row
                         break
             else:
                 self.logger.info(f"Streaming bars for contract {contract.localSymbol} requested successfully.")
-                self._current_subscriptions[contract] = ["live_bars", bars_subscription,callback]
+                self._current_subscriptions[contract] = ["live_bars", bars_subscription,callback, only_last_row]
             
             self.logger.debug(f"Current subscriptions for {contract.localSymbol}: {self._current_subscriptions[contract]}")
             
@@ -1399,7 +1443,8 @@ class IBKRHelper:
             sl_amount = round(sl_amount) if mintick < 1 else sl_amount - (sl_amount % mintick)
 
             # Create OCA group name
-            oca_group_name = f"OCA_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{await self.get_req_id()}"
+            pid = os.getpid()
+            oca_group_name = f"OCA_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{await self.get_req_id()}_{pid}"
             self.logger.debug(f"OCA Group Name: {oca_group_name}")
 
             # Create Stop loss order 
