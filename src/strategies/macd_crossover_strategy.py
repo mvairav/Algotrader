@@ -63,6 +63,19 @@ class MACDCrossOverStrategy(BaseStrategy):
                          f"min bars needed={self._min_bars_needed}")
 
 
+    def _reset_data(self):
+        """ Resets the COARSE bar data and indicators. """
+        self._close_data.clear()
+        self._close_data = deque(maxlen=self.max_window_size)
+        self.indicators = {
+            'timestamp': deque(maxlen=self.max_indicator_history) if self.max_indicator_history else [],
+            'macd': deque(maxlen=self.max_indicator_history) if self.max_indicator_history else [],
+            'signal': deque(maxlen=self.max_indicator_history) if self.max_indicator_history else [],
+            'hist': deque(maxlen=self.max_indicator_history) if self.max_indicator_history else []
+        }
+        self.logger.info("MACDStrategy data and indicators reset.")
+
+
     def _update_data_and_indicators(self, coarse_bar:RealTimeBar):
         """ Updates COARSE bar data window and calculates/stores indicators. """
 
@@ -151,44 +164,6 @@ class MACDCrossOverStrategy(BaseStrategy):
             self.logger.error(f"Invalid right value: {right}. Expected 'PE' or 'CE'.")
             return False
 
-
-    def check_pl_exit_conditions(self, fine_bar: RealTimeBar, position: Position):
-        """ Checks SL/TP based on FINE bar High/Low. """
-        trade_cond = False
-        reason = None
-        exit_price = None
-        default_return = [trade_cond, reason, exit_price]
-
-        if position is None or position.position <= 0: return default_return
-        if self.stop_loss_pct is None and self.take_profit_pct is None: return default_return
-
-        entry_price = position.avgCost
-        bar_high = fine_bar.high
-        bar_low = fine_bar.low
-        timestamp = fine_bar.time
-
-        if bar_high is None or bar_low is None:
-            self.logger.warning(f"Fine bar at {timestamp} missing high/low. Cannot check P/L exit.")
-            return default_return
-
-        if self.stop_loss_pct is not None:
-            stop_loss_price = entry_price * (1 - self.stop_loss_pct)
-            if bar_low <= stop_loss_price:
-                exit_price = stop_loss_price
-                reason = f"Stop loss"
-                trade_cond = True
-
-        if not trade_cond and self.take_profit_pct is not None:
-            take_profit_price = entry_price * (1 + self.take_profit_pct)
-            if bar_high >= take_profit_price:
-                exit_price = take_profit_price
-                reason = f"Take profit"
-                trade_cond = True
-
-        if trade_cond: 
-            self.logger.debug(f"      Strategy: P/L Exit -> {reason} at {timestamp}")
-
-        return [trade_cond, reason, exit_price]
 
 
     @staticmethod

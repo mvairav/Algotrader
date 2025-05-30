@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import pandas as pd
 import logging
 import datetime
+from ib_async import RealTimeBar  # Assuming this is the correct import for fine-grained bar data
 
 # Assume ib_async Contract is available
 from ib_async import Contract
@@ -86,19 +87,50 @@ class BaseStrategy(ABC):
         pass
 
     @abstractmethod
-    def check_pl_exit_conditions(self, fine_bar, position):
+    def _reset_data(self):
+        """
+        Reset the strategy state. Called by the Engine at the start of each backtest or live trading session.
+        This allows the strategy to clear any internal state and prepare for a new trading session.
+        """
+        pass
+
+    def check_pl_exit_conditions(self, entry_price, fine_bar:RealTimeBar):
         """
         Check Profit/Loss based exit conditions (SL/TP) using fine-grained bar data.
         Called by the Engine on every fine bar if a position is held.
 
         Args:
-            fine_bar (pd.Series or dict): The current fine-grained bar data (OHLCV).
-            position (ib_async.Position): The current open position object.
-
+            entry_price (float): The price at which the position was entered.
+            fine_bar (RealTimeBar): The fine-grained bar data containing high/low prices.
         Returns:
-            dict or None: An exit order dictionary if SL/TP is triggered, otherwise None.
+            str: Reason for exit if conditions are met, otherwise None.
         """
-        pass
+        reason = None
+
+        if self.stop_loss_pct is None and self.take_profit_pct is None: return reason
+
+        bar_high = fine_bar.high
+        bar_low = fine_bar.low
+        timestamp = fine_bar.time
+
+        if bar_high is None or bar_low is None:
+            self.logger.warning(f"Fine bar at {timestamp} missing high/low. Cannot check P/L exit.")
+            return reason
+
+        if self.stop_loss_pct is not None:
+            stop_loss_price = entry_price * (1 - self.stop_loss_pct)
+            if bar_low <= stop_loss_price:
+                reason = f"Stop loss"
+
+        if self.take_profit_pct is not None and reason is None:  
+            take_profit_price = entry_price * (1 + self.take_profit_pct)
+            if bar_high >= take_profit_price:
+                reason = f"Take profit"
+
+        if reason is not None:            
+            self.logger.debug(f" Exit condition -> {reason} at {timestamp}")
+
+        return reason
 
     def get_quantity(self, order_type='BUY'):
         """

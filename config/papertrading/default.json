@@ -1,7 +1,9 @@
 {
     "papertrading_params": {
-        "strike_range": 200,
+        "strike_range": 100,
         "expiry_weeks": 1,
-        "index": "NIFTY50"
+        "index": "NIFTY50",
+        "currency": "INR",
+        "exchange": "NSE"
     }
 }

@@ -9,13 +9,14 @@ import logging
 # Import all available strategy classes
 from .macd_strategy import MACDStrategy
 from .macd_crossover_strategy import MACDCrossOverStrategy
-
+from .macd_rsi_strategy import MACDRSIStrategy
 
 log = logging.getLogger(__name__)
 
 STRATEGY_REGISTRY = {
     "MACDStrategy": MACDStrategy,
-    "MACDCrossOverStrategy": MACDCrossOverStrategy,  
+    "MACDCrossOverStrategy": MACDCrossOverStrategy, 
+    "MACDRSIStrategy": MACDRSIStrategy 
 }
 
 def get_strategy_class(strategy_name: str):

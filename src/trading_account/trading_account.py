@@ -25,12 +25,22 @@ class ExecutionInfo:
     """
     Data class to hold execution information.
     """
-    fill:Fill
-    trigger_price:float = None
-    trigger_time:datetime = None
-    timezone:pd.Timestamp|datetime.datetime = None
+    
+    fill:Fill #Holds all the details of the fill
+
+    #Rest of the stuff that is not in the fill
+    trigger_price:float = None # Price at which the order was triggered by the code
+    trigger_time:datetime = None # Time at which the order was triggered by the code
+    timezone:pd.Timestamp|datetime.datetime = None # Timezone of the fill time
+    order_groupname:str = None # Name of the order group - useful to track matching buy and sell orders
+    PnL:float = None # PnL of the trade, only available on closing orders
 
     def __post_init__(self):
+        """
+        Post-initialization checks and conversions.
+        Mainly to make sure the timezones are aligned
+        Ensures fill is a valid ib_async.Fill object and converts times to the specified timezone.
+        """
         if not isinstance(self.fill, Fill):
             raise ValueError("fill must be an instance of ib_async.Fill")
         if self.trigger_price is not None and not isinstance(self.trigger_price, (float, int)):
@@ -47,7 +57,23 @@ class ExecutionInfo:
         if self.trigger_time:
             self.trigger_time = with_timezone(self.trigger_time,self.timezone)
         self.fill = copy.deepcopy(self.fill)  # Deep copy to avoid mutation
-        #Check if time has timezone info
+    
+    @staticmethod
+    def get_header_line():
+        # Returns the header line for the execution log CSV
+        return "Timestamp,Action,Reason,OrderRef,TriggerPrice,TriggerTime,Symbol,SecType,Right,Expiry,Strike,Quantity,AvgPrice,Commission,PnL,ExecId,OrderId,OrderGroupName"
+    
+    def __str__(self):
+        #Timestamp,Action,Reason,OrderRef,TriggerPrice,TriggerTime,Symbol,SecType,Right,Expiry,Strike,Quantity,AvgPrice,Commission,PnL,ExecId,OrderId,OrderGroupName
+        line = f"{self.fill.time},{self.fill.execution.side},"
+        line += f"{self.fill.execution.orderRef},{self.fill.execution.orderRef},{self.trigger_price},{self.trigger_time},"
+        line += f"{self.fill.contract.localSymbol},{self.fill.contract.secType},"
+        line += f"{self.fill.contract.right},{self.fill.contract.lastTradeDateOrContractMonth},"
+        line += f"{self.fill.contract.strike},{self.fill.execution.shares},"
+        line += f"{self.fill.execution.price},{self.fill.commissionReport.commission if self.fill.commissionReport else 0.0},"
+        line += f"{self.PnL},{self.fill.execution.execId},{self.fill.execution.orderId},{self.order_groupname}"
+        
+        return line
 
 
 class TradingAccount:
@@ -61,7 +87,7 @@ class TradingAccount:
 
     Not thread-safe.
     """
-    def __init__(self, trading_params, initial_capital=100000.0, account_id=None):
+    def __init__(self, trading_params, initial_capital=100000.0, account_id=None,tradefilepath=None):
         """
         Initializes the Trading Account state manager.
 
@@ -105,8 +131,34 @@ class TradingAccount:
         self.execution_log:list[ExecutionInfo] = []
         # Closed Trades Log: List of dicts storing details of realized PNL events
         self.closed_trades_log = []
+        self.order_groups = dict()
 
+        # Create a logger for storing trades data in a csv file
+        if tradefilepath is not None:
+            self.tradefilepath = tradefilepath
+            #create trade file logger
+            self.tradefilelogger = logging.getLogger('TradeFileLogger')
+            # Formatter: Just message for CSV data, no need for timestamps in the log format itself
+            formatter = logging.Formatter(
+                fmt="%(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            )
 
+            # Rotating file handler for the CSV data
+            handler = logging.handlers.RotatingFileHandler(
+                filename=tradefilepath,
+                maxBytes=20971520, # 20MB for data files
+                backupCount=10,    # Keep more backups for data
+                encoding='utf-8'
+            )
+            handler.setFormatter(formatter)
+            self.tradefilelogger.addHandler(handler)
+            self.tradefilelogger.setLevel(logging.INFO) # Set to INFO to log trade data
+            self.tradefilelogger.info(ExecutionInfo.get_header_line()) # Write header line to file
+            self.logger.info(f"Trade data will be logged to file: {tradefilepath}")
+        else:   
+            # Default to a file in the current working directory
+            self.logger.warning("No trade file path provided. Trade data will not be logged to a file.")
 
         self.logger.info(f"TradingAccount initialized with initial capital: ${self.initial_capital:,.2f}. Account ID: {self.account_id} and quantity: {self.quantity}")
         self.logger.info(f"Market time zone: {self.market_timezone}, Open Time: {self.market_open_time}, Close Time: {self.market_close_time}, EOD Exit Time: {self.eod_exit_time}")
@@ -140,17 +192,19 @@ class TradingAccount:
         """ Returns a dictionary of all currently open positions (Position objects). """
         return self.positions.copy() # Return shallow copy
 
-    def get_current_market_time(self):
+    def get_current_market_datetime(self):
         """ Returns the current market time in the configured market timezone. """
-        return datetime.datetime.now(self.market_timezone).time()
+        return datetime.datetime.now(self.market_timezone)
     
-    def is_eod_exit_time(self):
+    def is_eod_exit_time(self,timestamp=None):
         """ Checks if the current time is past eod trading time. """
         if self.market_open_time is None or self.market_close_time is None:
             self.logger.warning("Market open/close times not set. Cannot check EOD exit conditions.")
             return False
-
-        now = datetime.datetime.now(self.market_timezone).time()
+        if timestamp is None:
+            now = datetime.datetime.now(self.market_timezone).time()
+        else:
+            now = timestamp.time() if isinstance(timestamp, datetime.datetime) else timestamp
         if now >= self.eod_exit_time:
             self.logger.info(f"End of day for trading. Current time: {now}, Trading EOD time: {self.eod_exit_time}.")
             return True
@@ -159,7 +213,7 @@ class TradingAccount:
 
 
     # --- Unified Fill Processing ---
-    def process_fill(self, fill: Fill,trigger_price=None,trigger_time=None):
+    def process_fill(self, fill: Fill,trigger_price=None,trigger_time=None,order_groupname=None):
         """
         Processes a single trade fill, updating cash, positions, and logs.
         Accepts an ib_async.Fill object or a compatible dictionary/object
@@ -172,6 +226,7 @@ class TradingAccount:
         try:
             # --- Extract Data from Fill ---
             is_dict = isinstance(fill, dict)
+
             contract = getattr(fill, 'contract', None) if not is_dict else fill.get('contract')
             execution = getattr(fill, 'execution', None) if not is_dict else fill.get('execution')
             commission_report = getattr(fill, 'commissionReport', None) if not is_dict else fill.get('commissionReport')
@@ -230,6 +285,7 @@ class TradingAccount:
             # --- Update Positions (using ib_async.Position) ---
             current_pos = self.positions.get(key) # ib_async.Position object or None
 
+            # Assuming positions always start with buying first. TODO: Handle short positions
             if action == 'BUY':
                 if current_pos:
                     # Update existing Position
@@ -242,21 +298,15 @@ class TradingAccount:
                     # Create new Position
                     self.positions[key] = Position(account=self.account_id, contract=contract, position=qty, avgCost=price)
                     self.logger.debug(f"Opened new position {symbol}: Qty={qty}, AvgCost={price:.4f}")
+                
+                self.execution_log.append(ExecutionInfo(fill=fill, trigger_price=trigger_price,trigger_time=trigger_time,timezone=self.market_timezone,order_groupname=order_groupname))
+                self.order_groups[order_groupname] = self.execution_log[-1] 
 
             elif action == 'SELL':
                 if current_pos:
                     # Close or reduce existing Position
                     sell_qty = min(qty, current_pos.position)
                     if sell_qty < qty: self.logger.warning(f"Attempted to sell {qty} {symbol}, only had {current_pos.position}. Selling {sell_qty}.")
-
-                    # Log Realized PNL
-                    avg_cost = current_pos.avgCost
-                    realized_pnl_trade = (price - avg_cost) * sell_qty - comm # Net PnL for this fill
-                    closed_trade_info = { 'timestamp': timestamp, 'symbol': symbol, 'action': 'SELL', 'quantity': sell_qty,
-                                          'entry_price': avg_cost, 'exit_price': price, 'commission': comm,
-                                          'pnl': realized_pnl_trade, 'contract': copy.deepcopy(contract) }
-                    self.closed_trades_log.append(closed_trade_info)
-                    self.logger.debug(f"Realized PNL for trade: {realized_pnl_trade:.2f}")
 
                     # Update or Remove Position
                     if sell_qty == current_pos.position:
@@ -266,13 +316,26 @@ class TradingAccount:
                         new_qty = current_pos.position - sell_qty
                         self.positions[key] = Position(account=self.account_id, contract=current_pos.contract, position=new_qty, avgCost=current_pos.avgCost)
                         self.logger.debug(f"Reduced position {symbol}: Remaining Qty={new_qty}")
+
+                    #Compute realized PnL for this trade
+                    if order_groupname and order_groupname in self.order_groups:
+                        avg_buy_cost = self.order_groups[order_groupname].fill.execution.price
+                        buy_comm = self.order_groups[order_groupname].fill.commissionReport.commission 
+                        total_comm = buy_comm + comm
+                        realized_pnl_trade = (price - avg_buy_cost) * sell_qty - total_comm
+                        self.logger.info(f"Realized PnL for trade group {order_groupname}: {realized_pnl_trade:.2f}")
+                    else:
+                        self.logger.warning(f"Order group {order_groupname} not found in order_groups. Cannot calculate PnL for this trade.")
+                        realized_pnl_trade = (price - current_pos.avgCost) * sell_qty - comm    
+
+                    self.execution_log.append(ExecutionInfo(fill=fill, trigger_price=trigger_price,trigger_time=trigger_time,timezone=self.market_timezone,order_groupname=order_groupname, PnL=realized_pnl_trade))
+                    del self.order_groups[order_groupname] 
                 else:
                     self.logger.error(f"Attempted to sell {qty} {symbol} but no position held.")
 
-            # Store a copy of the original fill object/dict
-            #check timezone info on fill.time
 
-            self.execution_log.append(ExecutionInfo(fill=fill, trigger_price=trigger_price,trigger_time=trigger_time,timezone=self.market_timezone))
+            self.tradefilelogger.info(self.execution_log[-1]) # Log the trade to file if tradefilepath is set
+            
             self.logger.debug(f"Fill logged by TradingAccount. Total executions: {len(self.execution_log)}")
 
 
@@ -340,13 +403,15 @@ class TradingAccount:
              if comm_report: total_commission_paid += float(getattr(comm_report, 'commission', 0.0) if not isinstance(comm_report, dict) else comm_report.get('commission', 0.0))
              elif exec_data: total_commission_paid += float(getattr(exec_data, 'commission', 0.0) if not isinstance(exec_data, dict) else exec_data.get('commission', 0.0))
 
-        num_closed_trades = len(self.closed_trades_log)
-        gross_profit = sum(t['pnl'] for t in self.closed_trades_log if t['pnl'] > 0)
-        gross_loss = sum(t['pnl'] for t in self.closed_trades_log if t['pnl'] < 0)
-        net_profit_closed = sum(t['pnl'] for t in self.closed_trades_log)
+        winning_trades = [e for e in self.execution_log if e.fill.execution.side.upper() == 'SELL' and e.PnL is not None and e.PnL > 0]
+        losing_trades = [e for e in self.execution_log if e.fill.execution.side.upper() == 'SELL' and e.PnL is not None and e.PnL < 0]
+        num_closed_trades = len(winning_trades) + len(losing_trades)
+        gross_profit = sum(t.PnL for t in winning_trades)
+        gross_loss = sum(t.PnL for t in losing_trades)
+        net_profit_closed = gross_profit + gross_loss
 
-        num_winning_trades = sum(1 for t in self.closed_trades_log if t['pnl'] > 0)
-        num_losing_trades = sum(1 for t in self.closed_trades_log if t['pnl'] < 0)
+        num_winning_trades = len(winning_trades)
+        num_losing_trades = len(losing_trades)
         win_rate = (num_winning_trades / num_closed_trades * 100) if num_closed_trades > 0 else 0
         avg_win = (gross_profit / num_winning_trades) if num_winning_trades > 0 else 0
         avg_loss = (gross_loss / num_losing_trades) if num_losing_trades > 0 else 0
@@ -430,9 +495,42 @@ class TradingAccount:
         else:
             self.logger.warning("No valid slippages found. Cannot calculate average slippage.")
             return 0.0
-
-    # --- NEW: Method to get trades as DataFrame ---
+        
+    
     def get_all_trades_df(self):
+        """
+        Processes the internal execution log and returns a DataFrame
+        summarizing all trades (fills).
+
+        Returns:
+            pd.DataFrame: DataFrame containing trade details with columns like:
+                          Timestamp, Action, Symbol, SecType, Right, Expiry, Strike,
+                          Quantity, AvgPrice, Commission, PnL (from closed_trades_log), ExecId.
+                          Returns empty DataFrame if no trades occurred.
+        """
+    
+        cols = ExecutionInfo.get_header_line().split(',')
+        if len(self.execution_log) == 0:
+            self.logger.info("Execution log is empty. Returning empty DataFrame.")
+            return pd.DataFrame(columns=cols).set_index('Timestamp')
+
+        self.logger.info(f"Generating DataFrame from {len(self.execution_log)} execution log entries.")
+
+        trade_data_list = [ str(t).split(",")  for t in self.execution_log ]
+        
+        # Create DataFrame
+        trades_df = pd.DataFrame(trade_data_list, columns=cols)
+        trades_df['Timestamp'] = pd.to_datetime(trades_df['Timestamp'])
+        trades_df = trades_df.set_index('Timestamp')
+        numeric_cols = ['Quantity', 'AvgPrice', 'Commission', 'PnL', 'Strike', 'TriggerPrice']
+        for col in numeric_cols:
+            if col in trades_df.columns:
+                trades_df[col] = pd.to_numeric(trades_df[col], errors='coerce')
+
+        return trades_df
+
+    # --- OLD: Method to get trades as DataFrame ---
+    def get_all_trades_df_old(self):
         """
         Processes the internal execution log and returns a DataFrame
         summarizing all trades (fills).
@@ -548,7 +646,7 @@ class TradingAccount:
         trades_df['Timestamp'] = pd.to_datetime(trades_df['Timestamp'])
         trades_df["TriggerTime"] = pd.to_datetime(trades_df["TriggerTime"], errors='coerce')
 
-        trades_df = trades_df.set_index('Timestamp').sort_index()
+        trades_df = trades_df.sort_values('Timestamp')
         numeric_cols = ['Quantity', 'AvgPrice', 'Commission', 'PnL', 'Strike', 'TriggerPrice']
         for col in numeric_cols:
              if col in trades_df.columns:

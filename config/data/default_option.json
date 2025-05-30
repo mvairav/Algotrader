@@ -1,7 +1,7 @@
 {
     "data_source": {
         "filetype": "csv", 
-        "path_template": "./data/historical/{symbol}/{expiry}/{strike}/{filename}",
+        "path": "./data/historical/NIFTY/",
         "barsize": "5secs",
         "datetime_col": "Timestamp", 
         "date_format": null 
